@@ -1,9 +1,13 @@
 import json
 import time
+import os
+from flask import Flask, request
 from binance.um_futures import UMFutures
 from binance.error import ClientError
 
-# Binance Credentials
+app = Flask(__name__)
+
+# Binance Credentials (loaded from environment variables)
 BINANCE_API_KEY = "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo"
 BINANCE_API_SECRET  = "Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9"
 
@@ -101,13 +105,16 @@ def handle_alert(alert_json):
     except json.JSONDecodeError:
         print("❌ Invalid alert JSON.")
 
-# Example alert (from TradingView)
-alert_message = json.dumps({
-    "symbol": "BTCUSDT",
-    "side": "BUY",
-    "entry": 29000.0,
-    "sl": 28800.0,
-    "tp": 29500.0,
-    "qty": 0.001
-})
-handle_alert(alert_message)
+# Flask webhook endpoint for TradingView alerts
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    alert_json = request.get_data(as_text=True)
+    print(f"Received alert: {alert_json}")  # Log for debugging
+    handle_alert(alert_json)
+    return {"status": "success"}, 200
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=8080)
+
+ 
+
