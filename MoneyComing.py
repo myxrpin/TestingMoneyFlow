@@ -6,7 +6,8 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
     ConfigurationRestAPI,
     DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL,
 )
-from binance_sdk_derivatives_trading_usds_futures.rest_api.exceptions import RestAPIException
+from binance_sdk_derivatives_trading_usds_futures.exceptions import RestAPIException
+
  
 # Binance API Keys
 BINANCE_API_KEY = os.getenv("WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo", "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo")
@@ -129,3 +130,4 @@ handle_alert(alert_message)
 
 
  
+
