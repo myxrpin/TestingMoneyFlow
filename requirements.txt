@@ -1,3 +1,2 @@
-flask
-
-binance-connector
+flask==3.1.1
+python-binance==1.0.19
