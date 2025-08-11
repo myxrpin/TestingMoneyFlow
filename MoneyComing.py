@@ -1,8 +1,12 @@
-# app.py
-from flask import Flask, request, jsonify
-from binance.client import Client
 import os
+import json
 import traceback
+from flask import Flask, request, jsonify
+from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
+    DerivativesTradingUsdsFutures,
+    ConfigurationRestAPI,
+    DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL,
+)
 
 app = Flask(__name__)
 
