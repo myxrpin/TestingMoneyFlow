@@ -1,4 +1,4 @@
 flask==3.0.3
 binance-sdk-derivatives-trading-usds-futures
+binance-common  # Add this line for shared utilities and constants
 python-dotenv==1.0.1
-
