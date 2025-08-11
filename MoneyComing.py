@@ -17,10 +17,11 @@ BINANCE_API_KEY =  "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnn
 BINANCE_API_SECRET =  "Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9" 
 API_KEY = os.getenv("BINANCE_API_KEY", "")
 API_SECRET = os.getenv("BINANCE_API_SECRET", "")
+BASE_PATH = os.getenv("BASE_PATH", DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL)
 
-# Initialize Binance client
-client = Client(API_KEY, API_SECRET, testnet=False)  # testnet=True for testing
-
+config = ConfigurationRestAPI(api_key=API_KEY, api_secret=API_SECRET, base_path=BASE_PATH)
+client = DerivativesTradingUsdsFutures(config_rest_api=config)
+ 
 @app.route("/", methods=["GET"])
 def home():
     return "Binance Webhook Server Running!", 200
