@@ -1,2 +1,2 @@
-flask==3.1.1
-python-binance==1.0.19
+flask
+git+https://github.com/binance/binance-connector-python.git
