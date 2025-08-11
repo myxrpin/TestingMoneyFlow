@@ -1,87 +1,113 @@
-# 10AUG.py
-from flask import Flask, request, jsonify
-from binance.client import Client
-from binance.enums import (
-    SIDE_BUY, SIDE_SELL,
-    ORDER_TYPE_LIMIT,
-    ORDER_TYPE_TAKE_PROFIT_MARKET,
-    ORDER_TYPE_STOP_MARKET,
-    TIME_IN_FORCE_GTC
-)
-import os, json
+import json
+import time
+from binance.um_futures import UMFutures
+from binance.error import ClientError
 
-app = Flask(__name__)
+# Binance Credentials
+BINANCE_API_KEY = "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo"
+BINANCE_API_SECRET  = "Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9"
 
-# Binance credentials from Render Environment Variables
-BINANCE_API_KEY    = os.environ.get("WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo")
-BINANCE_API_SECRET = os.environ.get("Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9")
+client = UMFutures(key=BINANCE_API_KEY, secret=BINANCE_API_SECRET)
 
-if not BINANCE_API_KEY or not BINANCE_API_SECRET:
-    raise ValueError("❌ BINANCE_API_KEY or BINANCE_API_SECRET not set!")
-
-
-client = Client(BINANCE_API_KEY, BINANCE_API_SECRET, testnet=True)  # testnet=True for safety
-
-
-@app.route('/webhook', methods=['POST'])
-def webhook():
+# Cancel all open orders for a symbol
+def cancel_all_orders(symbol):
     try:
-        data = request.get_json()
-        print(f"📩 Received alert: {data}")
+        open_orders = client.get_orders(symbol=symbol)
+        for order in open_orders:
+            client.cancel_order(symbol=symbol, orderId=order['orderId'])
+        print(f"✅ All open orders cancelled for {symbol}")
+    except ClientError as e:
+        print(f"❌ Error cancelling orders: {e}")
 
-        symbol = data.get("symbol")
-        side = data.get("side").upper()
-        qty = float(data.get("qty"))
-        entry = float(data.get("entry"))
-        tp = float(data.get("tp"))
-        sl = float(data.get("sl"))
-
-        if not all([symbol, side, qty, entry, tp, sl]):
-            return jsonify({"error": "Invalid data"}), 400
-
-        # 1️⃣ Place limit order
-        order = client.futures_create_order(
+# Place limit entry order
+def place_limit_entry(symbol, side, entry_price, qty):
+    try:
+        order = client.new_order(
             symbol=symbol,
-            side=SIDE_BUY if side == "BUY" else SIDE_SELL,
-            type=ORDER_TYPE_LIMIT,
-            price=entry,
+            side=side,
+            type="LIMIT",
+            timeInForce="GTC",
             quantity=qty,
-            timeInForce=TIME_IN_FORCE_GTC
+            price=entry_price
         )
+        print(f"📌 Limit {side} order placed at {entry_price}")
+        return order['orderId']
+    except ClientError as e:
+        print(f"❌ Error placing limit order: {e}")
+        return None
 
-        print(f"✅ Limit order placed: {order}")
+# Wait for entry to fill
+def wait_for_fill(symbol, order_id):
+    while True:
+        order = client.get_order(symbol=symbol, orderId=order_id)
+        if order['status'] == "FILLED":
+            print(f"✅ Entry order filled for {symbol}")
+            return
+        time.sleep(1)
 
-        # 2️⃣ Place TP & SL orders (once entry is filled)
-        opposite_side = SIDE_SELL if side == "BUY" else SIDE_BUY
-
+# Place TP and SL
+def place_tp_sl(symbol, side, tp_price, sl_price, qty):
+    try:
         # Take Profit
-        tp_order = client.futures_create_order(
+        client.new_order(
             symbol=symbol,
-            side=opposite_side,
-            type=ORDER_TYPE_TAKE_PROFIT_MARKET,
-            stopPrice=tp,
+            side="SELL" if side == "BUY" else "BUY",
+            type="TAKE_PROFIT_MARKET",
+            stopPrice=tp_price,
             closePosition=True
         )
-
         # Stop Loss
-        sl_order = client.futures_create_order(
+        client.new_order(
             symbol=symbol,
-            side=opposite_side,
-            type=ORDER_TYPE_STOP_MARKET,
-            stopPrice=sl,
+            side="SELL" if side == "BUY" else "BUY",
+            type="STOP_MARKET",
+            stopPrice=sl_price,
             closePosition=True
         )
+        print(f"🎯 TP at {tp_price} and 🛑 SL at {sl_price} set.")
+    except ClientError as e:
+        print(f"❌ Error placing TP/SL: {e}")
 
-        print(f"🎯 TP order placed: {tp_order}")
-        print(f"🛑 SL order placed: {sl_order}")
+# Main handler
+def handle_alert(alert_json):
+    try:
+        data = json.loads(alert_json)
+        symbol = data["symbol"]
+        side = data["side"].upper()
+        entry = str(data["entry"])
+        sl = str(data["sl"])
+        tp = str(data["tp"])
+        qty = str(data["qty"])
 
-        return jsonify({
-            "status": "Limit order placed with TP/SL",
-            "entry_order": order,
-            "tp_order": tp_order,
-            "sl_order": sl_order
-        }), 200
+        # If cancel action
+        if data.get("action") == "CANCEL":
+            cancel_all_orders(symbol)
+            return
 
-    except Exception as e:
-        print(f"❌ ERROR: {e}")
-        return jsonify({"error": str(e)}), 500
+        # Cancel any open orders
+        cancel_all_orders(symbol)
+
+        # Place limit order
+        order_id = place_limit_entry(symbol, side, entry, qty)
+        if not order_id:
+            return
+
+        # Wait for it to fill
+        wait_for_fill(symbol, order_id)
+
+        # Place TP & SL after fill
+        place_tp_sl(symbol, side, tp, sl, qty)
+
+    except json.JSONDecodeError:
+        print("❌ Invalid alert JSON.")
+
+# Example alert (from TradingView)
+alert_message = json.dumps({
+    "symbol": "BTCUSDT",
+    "side": "BUY",
+    "entry": 29000.0,
+    "sl": 28800.0,
+    "tp": 29500.0,
+    "qty": 0.001
+})
+handle_alert(alert_message)
