@@ -12,16 +12,17 @@ from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futur
 )
 
 # ---------- Configuration ----------
- 
-BINANCE_API_KEY = os.getenv("WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo", "")
-BINANCE_API_SECRET = os.getenv("Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9", "")
+BINANCE_API_KEY =  "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo" 
+BINANCE_API_SECRET =  "Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9" 
+API_KEY = os.getenv("BINANCE_API_KEY", "")
+API_SECRET = os.getenv("BINANCE_API_SECRET", "")
 # Optionally set BASE_PATH to testnet URL: e.g. https://testnet.binancefuture.com
 BASE_PATH = os.getenv("BASE_PATH", DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL)
 
-if not BINANCE_API_KEY or not BINANCE_API_SECRET:
+if not API_KEY or not API_SECRET:
     raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set in environment")
 
-config = ConfigurationRestAPI(api_key=BINANCE_API_KEY, api_secret=BINANCE_API_SECRET, base_path=BASE_PATH)
+config = ConfigurationRestAPI(api_key=API_KEY, api_secret=API_SECRET, base_path=BASE_PATH)
 client = DerivativesTradingUsdsFutures(config_rest_api=config)
 
 # Tuning
@@ -210,6 +211,8 @@ def index():
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT","5000")), debug=False)
+
+
 
 
 
