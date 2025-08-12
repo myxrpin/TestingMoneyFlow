@@ -1,34 +1,31 @@
 import os
 import time
-import json
 from flask import Flask, request, jsonify
-
-# Official Binance USD-M Futures SDK
 from binance_sdk_derivatives_trading_usds_futures.derivatives_trading_usds_futures import (
     DerivativesTradingUsdsFutures,
     ConfigurationRestAPI,
     DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL,
 )
 
-# ---------- Configuration ----------
+# ---------------- Configuration ----------------
 API_KEY = os.getenv("BINANCE_API_KEY", "WMi5r5amHglmbWeWOzcdmIMKoOCtpfr8stZA9MW2NZcTQFfXjTP2ZOsLurnniHHo")
 API_SECRET = os.getenv("BINANCE_API_SECRET", "Rpd0ibB2vLPWYnvEuYiZq47uAriOt0M7OMJkEpIdNsCQt47QKk1R7RbxVsMG1QJ9")
 BASE_PATH = os.getenv("BASE_PATH", DERIVATIVES_TRADING_USDS_FUTURES_REST_API_PROD_URL)
 
+FILL_WAIT_TIMEOUT = int(os.getenv("FILL_WAIT_TIMEOUT", "120"))  # seconds to wait for fill
+POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "1.0"))         # seconds between checks
+
 if not API_KEY or not API_SECRET:
-    raise ValueError("BINANCE_API_KEY and BINANCE_API_SECRET must be set.")
+    raise ValueError("Missing Binance API credentials")
 
 config = ConfigurationRestAPI(api_key=API_KEY, api_secret=API_SECRET, base_path=BASE_PATH)
 client = DerivativesTradingUsdsFutures(config_rest_api=config)
 
-# Tuning
-FILL_WAIT_TIMEOUT = int(os.getenv("FILL_WAIT_TIMEOUT", "120"))
-POLL_INTERVAL = float(os.getenv("POLL_INTERVAL", "1.0"))
-
 app = Flask(__name__)
 
-# ---------- Helpers ----------
+# ---------------- Helper Functions ----------------
 def _resp_to_dict(resp):
+    """Convert SDK response to a plain dictionary."""
     try:
         if hasattr(resp, "to_dict") and callable(resp.to_dict):
             return resp.to_dict()
@@ -41,6 +38,7 @@ def _resp_to_dict(resp):
     return {"raw": str(resp)}
 
 def _extract_order_id(resp_dict):
+    """Extract order ID from various response formats."""
     for key in ("orderId", "order_id", "clientOrderId", "client_order_id"):
         if key in resp_dict:
             return resp_dict[key]
@@ -52,14 +50,16 @@ def _extract_order_id(resp_dict):
     return None
 
 def _call_rest(method_names, **kwargs):
+    """Try calling REST API methods in order until one works."""
     for name in method_names:
         func = getattr(client.rest_api, name, None)
         if callable(func):
             return func(**kwargs)
-    raise AttributeError(f"No REST API method found among: {method_names}")
+    raise AttributeError(f"No method found for {method_names}")
 
+# ---------------- Binance Actions ----------------
 def cancel_all_open_orders(symbol):
-    """Cancel all open orders for the symbol in one API call."""
+    """Cancel all open orders for a symbol."""
     try:
         resp = _call_rest(["cancel_all_open_orders"], symbol=symbol)
         return _resp_to_dict(resp)
@@ -67,6 +67,7 @@ def cancel_all_open_orders(symbol):
         return {"error": str(e)}
 
 def place_limit_entry(symbol, side, entry_price, qty):
+    """Place a GTC limit entry order."""
     try:
         resp = _call_rest(
             ["new_order"],
@@ -84,6 +85,7 @@ def place_limit_entry(symbol, side, entry_price, qty):
         return None, {"error": str(e)}
 
 def get_order_status(symbol, order_id):
+    """Check the status of an order."""
     try:
         resp = _call_rest(["get_order"], symbol=symbol, orderId=order_id)
         return _resp_to_dict(resp)
@@ -91,20 +93,24 @@ def get_order_status(symbol, order_id):
         return {"error": str(e)}
 
 def wait_for_fill(symbol, order_id, timeout=FILL_WAIT_TIMEOUT, poll=POLL_INTERVAL):
+    """Wait until the order is filled or timeout expires."""
     deadline = time.time() + timeout
     while time.time() < deadline:
-        s = get_order_status(symbol, order_id)
-        if s.get("error"):
-            return False, s
-        status = (s.get("status") or s.get("orderStatus") or (s.get("data") or {}).get("status", "")).upper()
+        status_resp = get_order_status(symbol, order_id)
+        if status_resp.get("error"):
+            return False, status_resp
+        status = (status_resp.get("status")
+                  or status_resp.get("orderStatus")
+                  or (status_resp.get("data") or {}).get("status", "")).upper()
         if status == "FILLED":
-            return True, s
+            return True, status_resp
         if status in ("CANCELED", "REJECTED", "EXPIRED"):
-            return False, s
+            return False, status_resp
         time.sleep(poll)
     return False, {"status": "TIMEOUT"}
 
 def place_tp_sl_after_fill(symbol, side, tp_price, sl_price):
+    """Place Take Profit and Stop Loss after entry is filled."""
     try:
         opposite = "SELL" if side == "BUY" else "BUY"
 
@@ -116,6 +122,7 @@ def place_tp_sl_after_fill(symbol, side, tp_price, sl_price):
             stopPrice=str(tp_price),
             closePosition=True
         )
+
         sl_resp = _call_rest(
             ["new_order"],
             symbol=symbol,
@@ -124,15 +131,17 @@ def place_tp_sl_after_fill(symbol, side, tp_price, sl_price):
             stopPrice=str(sl_price),
             closePosition=True
         )
+
         return {"tp": _resp_to_dict(tp_resp), "sl": _resp_to_dict(sl_resp)}
     except Exception as e:
         return {"error": str(e)}
 
-# ---------- Flask webhook ----------
+# ---------------- Webhook Endpoint ----------------
 @app.route("/webhook", methods=["POST"])
 def webhook():
     if not request.is_json:
         return jsonify({"status": "error", "message": "Expected JSON"}), 400
+
     data = request.get_json()
     app.logger.info("Received payload: %s", data)
 
@@ -155,26 +164,36 @@ def webhook():
     except KeyError as ke:
         return jsonify({"status": "error", "message": f"Missing field {ke}"}), 400
 
+    # Step 1: Cancel existing orders
     cancel_result = cancel_all_open_orders(symbol)
     app.logger.info("Cancel result: %s", cancel_result)
 
+    # Step 2: Place limit entry
     order_id, place_resp = place_limit_entry(symbol, side, entry, qty)
     if not order_id:
-        return jsonify({"status": "error", "message": "failed to place limit", "detail": place_resp}), 500
-
+        return jsonify({"status": "error", "message": "Failed to place limit", "detail": place_resp}), 500
     app.logger.info("Placed LIMIT order id=%s resp=%s", order_id, place_resp)
 
+    # Step 3: Wait for fill
     filled, final_status = wait_for_fill(symbol, order_id)
     if not filled:
         _call_rest(["cancel_order"], symbol=symbol, orderId=order_id)
-        return jsonify({"status": "error", "message": "entry not filled", "detail": final_status}), 409
+        return jsonify({"status": "error", "message": "Entry not filled", "detail": final_status}), 409
 
+    # Step 4: Place TP & SL
     tp_sl = place_tp_sl_after_fill(symbol, side, tp, sl)
-    return jsonify({"status": "ok", "entry_order_id": order_id, "entry_response": place_resp, "tp_sl": tp_sl}), 200
+    return jsonify({
+        "status": "ok",
+        "entry_order_id": order_id,
+        "entry_response": place_resp,
+        "tp_sl": tp_sl
+    }), 200
 
+# ---------------- Healthcheck ----------------
 @app.route("/", methods=["GET"])
 def index():
     return "OK - webhook running"
 
+# ---------------- Main ----------------
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "5000")), debug=False)
